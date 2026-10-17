@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useApp } from "./store";
 import {
@@ -11,14 +11,13 @@ import {
     RefreshCw,
     Plus,
     LogOut,
-    Wifi,
-    WifiOff,
+    LockKeyhole,
     Download,
-    Menu,
 } from "@lucide/vue";
 import { useRegisterSW } from "virtual:pwa-register/vue";
 import Modal from "./components/Modal.vue";
 import PasswordField from "./components/PasswordField.vue";
+import FormError from "./components/FormError.vue";
 import { VaultPasswordError, type Profile } from "./lib/vault";
 const app = useApp(),
     router = useRouter(),
@@ -32,12 +31,21 @@ const app = useApp(),
     mode = ref<"login" | "migrate">("login"),
     showLogout = ref(false),
     logoutBusy = ref(false),
-    logoutError = ref("");
+    logoutError = ref(""),
+    displayBusy = ref(false),
+    displayError = ref("");
 const { needRefresh, offlineReady, updateServiceWorker } = useRegisterSW({
     onRegisterError(e) {
         console.error("Service worker registration", e);
     },
 });
+const controllerReady = ref(Boolean(navigator.serviceWorker?.controller));
+const offlineReadyForUse = computed(
+    () => offlineReady.value && controllerReady.value,
+);
+function updateController() {
+    controllerReady.value = Boolean(navigator.serviceWorker?.controller);
+}
 const existing = computed(() =>
     app.verified
         ? app.profiles.find(
@@ -56,6 +64,13 @@ const hasUnsyncedData = computed(
         app.invoices.some(
             (invoice) => invoice.local_only || invoice.local_dirty,
         ),
+);
+const unsyncedDrafts = computed(() =>
+    app.invoices.filter(
+        (invoice) =>
+            invoice.status === "draft" &&
+            (invoice.local_only || invoice.local_dirty),
+    ),
 );
 const isSimpleInvoiceEditor = computed(
     () =>
@@ -78,15 +93,37 @@ const installEvent = ref<any>(),
     installHelp = ref(false);
 onMounted(() => {
     void app.init();
+    navigator.serviceWorker?.addEventListener(
+        "controllerchange",
+        updateController,
+    );
     window.addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();
         installEvent.value = e;
     });
 });
+onUnmounted(() => {
+    navigator.serviceWorker?.removeEventListener(
+        "controllerchange",
+        updateController,
+    );
+});
+async function toggleSimpleMode() {
+    displayBusy.value = true;
+    displayError.value = "";
+    try {
+        await app.setSimpleMode(!app.user?.simple_mode);
+    } catch (e) {
+        displayError.value = (e as Error).message;
+    } finally {
+        displayBusy.value = false;
+    }
+}
 async function login() {
     busy.value = true;
     error.value = "";
     try {
+        await router.replace("/");
         await app.login(email.value, password.value);
     } catch (e) {
         if (e instanceof VaultPasswordError && app.verified) {
@@ -105,6 +142,7 @@ async function migrate() {
     busy.value = true;
     error.value = "";
     try {
+        await router.replace("/");
         await app.open(
             selected.value,
             previousPassword.value,
@@ -154,9 +192,9 @@ async function logout() {
     try {
         await app.flushDraft();
         if (hasUnsyncedData.value) return;
-        await app.logout();
         showLogout.value = false;
         resetLogin();
+        await app.logout();
         await router.replace("/");
     } catch (e) {
         logoutError.value = (e as Error).message;
@@ -165,9 +203,38 @@ async function logout() {
     }
 }
 async function lock() {
-    await app.flushDraft();
-    await app.lock();
-    resetLogin();
+    if (logoutBusy.value) return;
+    logoutBusy.value = true;
+    logoutError.value = "";
+    try {
+        await app.flushDraft();
+        showLogout.value = false;
+        resetLogin();
+        await app.lock();
+        await router.replace("/");
+    } catch (e) {
+        logoutError.value = (e as Error).message;
+        showLogout.value = true;
+    } finally {
+        logoutBusy.value = false;
+    }
+}
+async function saveChangesOnline() {
+    logoutBusy.value = true;
+    logoutError.value = "";
+    try {
+        await app.flushDraft();
+        await app.sync();
+        if (pending.value) {
+            logoutError.value = app.needsAuth
+                ? "Sign in again to save online. You can lock the app and keep your work on this device."
+                : "Some changes could not be saved online. You can keep working or lock the app safely.";
+        }
+    } catch (e) {
+        logoutError.value = (e as Error).message;
+    } finally {
+        logoutBusy.value = false;
+    }
 }
 async function update() {
     await app.flushDraft();
@@ -229,7 +296,10 @@ async function update() {
                         required
                         autocomplete="current-password"
                     />
-                    <button class="button primary full" :disabled="busy">
+                    <button
+                        class="button primary full"
+                        :disabled="busy || logoutBusy"
+                    >
                         {{ busy ? "Signing in…" : "Sign in" }}
                     </button>
                 </form>
@@ -299,7 +369,7 @@ async function update() {
                     /><span
                         >Sync status<small>{{
                             pending
-                                ? pending + " changes queued"
+                                ? pending + " changes waiting to save online"
                                 : "All work saved"
                         }}</small></span
                     ><span v-if="pending" class="count-badge">{{
@@ -318,12 +388,12 @@ async function update() {
                                 : "Staff"
                         }}</small></span
                     ><button
-                        class="icon-button"
+                        class="icon-button signout-button"
                         aria-label="Sign out"
                         :disabled="logoutBusy"
                         @click="requestLogout"
                     >
-                        <LogOut :size="18" />
+                        <LogOut :size="18" /><span>Sign out</span>
                     </button>
                 </div>
             </div>
@@ -333,6 +403,19 @@ async function update() {
                 <span class="shop-label"
                     >Cash sales <span>/</span> Shop workspace</span
                 ><span class="mobile-brand">SINLINK</span>
+                <button
+                    type="button"
+                    class="button secondary display-toggle"
+                    :aria-pressed="!!app.user.simple_mode"
+                    :disabled="displayBusy"
+                    @click="toggleSimpleMode"
+                >
+                    Larger text
+                    <span class="sr-only">and simpler layout</span>
+                    <span aria-hidden="true">{{
+                        app.user.simple_mode ? "On" : "Off"
+                    }}</span>
+                </button>
                 <div class="connection">
                     <span
                         :class="['connection-dot', { offline: !app.online }]"
@@ -342,9 +425,9 @@ async function update() {
                             : !app.online
                               ? "Offline · saved on device"
                               : app.needsAuth
-                                ? "Sign in to sync"
+                                ? "Sign in to save online"
                                 : pending
-                                  ? pending + " pending"
+                                  ? pending + " changes waiting to save"
                                   : "Connected & up to date"
                     }}</span
                     ><button
@@ -355,7 +438,7 @@ async function update() {
                         <RefreshCw
                             :size="16"
                             :class="{ spinning: app.syncing }"
-                        />
+                        /><span class="sync-button-label">Save online</span>
                     </button>
                     <button
                         class="icon-button mobile-only"
@@ -363,7 +446,7 @@ async function update() {
                         :disabled="logoutBusy"
                         @click="requestLogout"
                     >
-                        <LogOut :size="18" />
+                        <LogOut :size="18" /><span>Sign out</span>
                     </button>
                 </div>
             </header>
@@ -380,19 +463,20 @@ async function update() {
                     Update safely
                 </button>
             </div>
-            <div v-if="offlineReady" class="toast no-print" role="status">
+            <div v-if="offlineReadyForUse" class="toast no-print" role="status">
                 Application ready for offline use.
                 <button class="text-button" @click="offlineReady = false">
                     Dismiss
                 </button>
             </div>
-            <main class="page"><RouterView :key="$route.path" /></main>
+            <main class="page">
+                <FormError :message="displayError" />
+                <RouterView :key="$route.path" />
+            </main>
         </div>
         <nav class="mobile-nav no-print">
             <RouterLink to="/"><FileText :size="20" />Invoices</RouterLink
-            ><RouterLink
-                v-if="app.user.role === 'admin' && !app.user.simple_mode"
-                to="/customers"
+            ><RouterLink v-if="app.user.role === 'admin'" to="/customers"
                 ><Users :size="20" />Customers</RouterLink
             ><button
                 v-if="isSimpleInvoiceEditor"
@@ -420,20 +504,71 @@ async function update() {
     </div>
     <Modal v-if="showLogout" @close="showLogout = false"
         ><template #title
-            ><h2>{{ hasUnsyncedData ? "Unsynced data" : "Sign out?" }}</h2>
+            ><h2>
+                {{
+                    logoutError
+                        ? "Your work needs attention"
+                        : hasUnsyncedData
+                          ? "Keep your unfinished work"
+                          : "Sign out?"
+                }}
+            </h2>
         </template>
-        <p v-if="hasUnsyncedData" role="alert">
-            Please don’t sign out yet. You have unsynced data.
+        <p v-if="hasUnsyncedData && !logoutError" role="alert">
+            Your work is saved on this device, but some changes have not been
+            saved online. You can lock the app safely and sign in on this
+            browser later to continue.
         </p>
-        <p v-else-if="!logoutError">Are you sure you want to sign out?</p>
-        <p v-if="logoutError" class="error" role="alert">{{ logoutError }}</p>
+        <p v-if="pending">{{ pending }} changes are waiting to save online.</p>
+        <p v-if="pending && !app.online" class="hint">
+            Connect to the internet to save online, or lock the app to keep your
+            work here.
+        </p>
+        <div v-if="unsyncedDrafts.length" class="local-drafts">
+            <p>
+                Finish these drafts and choose Save Draft to save them online:
+            </p>
+            <ul>
+                <li v-for="draft in unsyncedDrafts" :key="draft.id">
+                    <RouterLink
+                        :to="'/invoices/' + draft.id + '/edit'"
+                        @click="showLogout = false"
+                    >
+                        {{
+                            draft.customer_snapshot.name || "Unfinished invoice"
+                        }}
+                        · {{ draft.invoice_date }}
+                    </RouterLink>
+                </li>
+            </ul>
+        </div>
+        <p v-if="!hasUnsyncedData && !logoutError">
+            Are you sure you want to sign out?
+        </p>
+        <FormError :message="logoutError" />
         <div class="form-actions">
             <button
                 class="button secondary"
                 :disabled="logoutBusy"
                 @click="showLogout = false"
             >
-                {{ hasUnsyncedData || logoutError ? "Okay" : "Cancel" }}
+                {{ hasUnsyncedData || logoutError ? "Keep working" : "Cancel" }}
+            </button>
+            <button
+                v-if="hasUnsyncedData && pending"
+                class="button secondary"
+                :disabled="logoutBusy || !app.online || app.needsAuth"
+                @click="saveChangesOnline"
+            >
+                {{ logoutBusy ? "Saving…" : "Save changes online" }}
+            </button>
+            <button
+                v-if="hasUnsyncedData || logoutError"
+                class="button primary"
+                :disabled="logoutBusy"
+                @click="lock"
+            >
+                <LockKeyhole :size="18" />Lock & keep work
             </button>
             <button
                 v-if="!hasUnsyncedData && !logoutError"

@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, inject, reactive, ref } from "vue";
 import { useApp } from "../store";
 import type { Vehicle } from "../lib/types";
+import FormError from "./FormError.vue";
 const props = defineProps<{ vehicle?: Vehicle; customerId?: string }>();
 const emit = defineEmits<{ saved: [Vehicle]; cancel: [] }>();
 const app = useApp();
+const requestClose = inject<() => void>("requestModalClose", () =>
+    emit("cancel"),
+);
 const form = reactive<Partial<Vehicle>>({
     ...props.vehicle,
     customer_ids: [
@@ -35,8 +39,8 @@ async function submit() {
 }
 </script>
 <template>
-    <form class="form-grid" @submit.prevent="submit">
-        <p v-if="error" class="error span-full" role="alert">{{ error }}</p>
+    <form class="form-grid" :aria-busy="busy" @submit.prevent="submit">
+        <FormError :message="error" class="span-full" />
         <label
             >Registration number<input
                 v-model="form.registration"
@@ -89,7 +93,8 @@ async function submit() {
             <button
                 type="button"
                 class="button secondary"
-                @click="emit('cancel')"
+                :disabled="busy"
+                @click="requestClose"
             >
                 Cancel
             </button>

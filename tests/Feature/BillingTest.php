@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\User;
+use App\Models\Vehicle;
 use App\Services\BillingFeed;
 use App\Services\Money;
 use Database\Seeders\DatabaseSeeder;
@@ -67,6 +68,66 @@ class BillingTest extends TestCase
         $this->assertTrue($this->push($op)['ok']);
 
         return Invoice::findOrFail($op['entity_id']);
+    }
+
+    #[TestWith(['invoice.save'])]
+    #[TestWith(['invoice.issue'])]
+    public function test_invoice_car_details_create_a_car_linked_to_the_customer(string $type): void
+    {
+        $customer = Customer::factory()->create(['created_by' => $this->admin->id]);
+        $payload = [...$this->payload($customer), 'vehicle_registration' => 'vdr 4118', 'car_model' => 'MYVI'];
+        $operation = $this->op($type, $payload);
+
+        $this->assertTrue($this->push($operation)['ok']);
+
+        $vehicle = Vehicle::sole();
+        $this->assertSame('VDR 4118', $vehicle->registration);
+        $this->assertSame('VDR4118', $vehicle->normalized_registration);
+        $this->assertSame('MYVI', $vehicle->car_model);
+        $this->assertSame([(string) $customer->id], $vehicle->customers->modelKeys());
+        $this->assertDatabaseHas('change_log', ['entity_type' => 'vehicle', 'entity_id' => $vehicle->id]);
+        $this->assertTrue($this->push($operation)['ok']);
+        $this->assertDatabaseCount('vehicles', 1);
+        $this->assertDatabaseCount('customer_vehicle', 1);
+        $this->assertSame(1, $vehicle->fresh()->version);
+    }
+
+    public function test_an_invoice_links_an_existing_car_without_overwriting_its_details_or_other_customers(): void
+    {
+        $customers = Customer::factory()->count(2)->create(['created_by' => $this->admin->id]);
+        $vehicle = Vehicle::factory()->create(['registration' => 'VDR 4118', 'normalized_registration' => 'VDR4118', 'car_model' => 'MYVI', 'notes' => 'Keep these notes', 'created_by' => $this->admin->id]);
+        $vehicle->customers()->attach((string) $customers[0]->id);
+        $payload = [...$this->payload($customers[1]), 'vehicle_registration' => 'vdr-4118', 'car_model' => 'Different snapshot'];
+
+        $this->assertTrue($this->push($this->op('invoice.save', $payload))['ok']);
+
+        $this->assertDatabaseCount('vehicles', 1);
+        $this->assertDatabaseHas('vehicles', ['id' => $vehicle->id, 'car_model' => 'MYVI', 'notes' => 'Keep these notes', 'version' => 2]);
+        $this->assertEqualsCanonicalizing(array_map(strval(...), $customers->modelKeys()), $vehicle->fresh()->customers->modelKeys());
+        $this->assertTrue($this->push($this->op('invoice.save', $this->payload($customers[1]) + ['vehicle_registration' => 'VDR4118']))['ok']);
+        $this->assertSame(2, $vehicle->fresh()->version);
+        $this->assertSame(1, DB::table('change_log')->where('entity_type', 'vehicle')->count());
+    }
+
+    public function test_a_registration_without_a_model_still_creates_the_customers_car(): void
+    {
+        $payload = [...$this->payload(), 'vehicle_registration' => 'ABC 1234'];
+
+        $this->assertTrue($this->push($this->op('invoice.save', $payload))['ok']);
+
+        $this->assertDatabaseHas('vehicles', ['normalized_registration' => 'ABC1234', 'car_model' => 'Unspecified']);
+        $this->assertDatabaseHas('customer_vehicle', ['customer_id' => $payload['customer_id']]);
+    }
+
+    public function test_rejected_invoices_do_not_create_cars_or_customer_links(): void
+    {
+        $payload = [...$this->payload(), 'vehicle_registration' => 'ABC 1234', 'car_model' => 'MYVI'];
+        $payload['total_cents']++;
+
+        $this->assertSame(422, $this->push($this->op('invoice.issue', $payload))['status']);
+
+        $this->assertDatabaseCount('vehicles', 0);
+        $this->assertDatabaseCount('customer_vehicle', 0);
     }
 
     public function test_login_permissions_and_staff_management(): void

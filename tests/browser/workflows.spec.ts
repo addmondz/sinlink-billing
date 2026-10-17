@@ -3,8 +3,8 @@ import fs from "node:fs";
 const creds = JSON.parse(
     fs.readFileSync("storage/test-artifacts/login.json", "utf8"),
 );
-async function signIn(page: Page) {
-    await page.goto("/");
+async function signIn(page: Page, path = "/") {
+    await page.goto(path);
     await page.getByLabel("Email", { exact: true }).fill(creds.email);
     await page.getByLabel("Password", { exact: true }).fill(creds.password);
     let response = await Promise.all([
@@ -79,6 +79,195 @@ async function signIn(page: Page) {
         )
         .toBe(false);
 }
+
+test("customer forms preserve edits when dismissed and show accessible phone errors", async ({
+    page,
+    context,
+}) => {
+    await signIn(page);
+    await context.setOffline(true);
+    for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await page
+            .getByRole("link", { name: "Customers", exact: true })
+            .first()
+            .click();
+        await page
+            .getByRole("button", { name: "Create customer", exact: true })
+            .first()
+            .click();
+        const dialog = page.getByRole("dialog", {
+            name: "Create customer",
+            exact: true,
+        });
+        await dialog
+            .getByLabel("Name", { exact: true })
+            .fill("Unsaved customer details");
+        await dialog.getByLabel("Phone", { exact: true }).fill("0123");
+
+        for (const dismiss of [
+            () => page.mouse.click(5, 5),
+            () => page.keyboard.press("Escape"),
+            () =>
+                dialog
+                    .getByRole("button", { name: "Close dialog", exact: true })
+                    .click(),
+            () =>
+                dialog
+                    .getByRole("button", { name: "Cancel", exact: true })
+                    .click(),
+        ]) {
+            await dismiss();
+            await expect(
+                dialog.getByRole("button", {
+                    name: "Keep editing",
+                    exact: true,
+                }),
+            ).toBeFocused();
+            await dialog
+                .getByRole("button", { name: "Keep editing", exact: true })
+                .click();
+            await expect(
+                dialog.getByLabel("Name", { exact: true }),
+            ).toHaveValue("Unsaved customer details");
+            await expect(
+                dialog.getByLabel("Phone", { exact: true }),
+            ).toHaveValue("0123");
+        }
+        await dialog
+            .getByRole("button", { name: "Save customer", exact: true })
+            .click();
+        await expect(dialog.getByRole("alert")).toBeFocused();
+        await expect(dialog.getByRole("alert")).toBeInViewport();
+        await expect(
+            dialog.getByLabel("Phone", { exact: true }),
+        ).toHaveAttribute("aria-invalid", "true");
+        await expect(
+            dialog.getByLabel("Phone", { exact: true }),
+        ).toHaveAttribute(
+            "aria-describedby",
+            (await dialog.getByRole("alert").getAttribute("id")) as string,
+        );
+        await dialog
+            .getByRole("button", { name: "Cancel", exact: true })
+            .click();
+        await dialog
+            .getByRole("button", { name: "Discard changes", exact: true })
+            .click();
+        await expect(dialog).toHaveCount(0);
+    }
+});
+
+test("mobile invoice errors stay visible and locking keeps an unfinished draft", async ({
+    page,
+    context,
+}) => {
+    await signIn(page);
+    await context.setOffline(true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const displayToggle = page.getByRole("button", { name: /Larger text/ });
+    await displayToggle.click();
+    await expect(displayToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(
+        page
+            .locator(".mobile-nav")
+            .getByRole("link", { name: "Customers", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("link", { name: "New Invoice", exact: true }).click();
+    await expect(page).toHaveURL(/\/invoices\/[^/]+\/edit$/);
+    const draftUrl = page.url();
+    const description = "Unfinished invoice kept after locking";
+    await page.getByLabel("Item 1 description").fill(description);
+    for (const action of ["Save Draft", "Issue Invoice"]) {
+        await page.getByRole("button", { name: action, exact: true }).click();
+        await expect(page.getByRole("alert")).toContainText(
+            "Select a customer",
+        );
+        await expect(page.getByRole("alert")).toBeFocused();
+        await expect(page.getByRole("alert")).toBeInViewport();
+        await expect(
+            page.getByLabel("Find customer by mobile number"),
+        ).toHaveAttribute("aria-invalid", "true");
+    }
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(
+        dialog.getByRole("link", { name: /Unfinished invoice/ }),
+    ).toHaveAttribute("href", new URL(draftUrl).pathname);
+    await dialog
+        .getByRole("button", { name: "Lock & keep work", exact: true })
+        .click();
+    await expect(
+        page.getByRole("heading", { name: "Welcome back", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".app-layout")).toHaveCount(0);
+    await page.getByLabel("Email", { exact: true }).fill(creds.email);
+    await page.getByLabel("Password", { exact: true }).fill(creds.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(
+        page.getByRole("heading", { name: "Invoices", exact: true }),
+    ).toBeVisible();
+    const draftPath = new URL(draftUrl).pathname.replace(/\/edit$/, "");
+    const draft = page.locator('.invoice-card[href="' + draftPath + '"]');
+    await expect(draft.locator("time")).toHaveAttribute(
+        "datetime",
+        /^\d{4}-\d{2}-\d{2}$/,
+    );
+    await draft.click();
+    await page.getByRole("link", { name: "Edit Draft", exact: true }).click();
+    await expect(page).toHaveURL(draftUrl);
+    await expect(page.getByLabel("Item 1 description")).toHaveValue(
+        description,
+    );
+});
+
+test("a first visit supports offline PDF downloads without reloading", async ({
+    page,
+    context,
+}) => {
+    await page.goto("/");
+    const firstNavigation = await page.evaluate(() => performance.timeOrigin);
+    await page.getByLabel("Email", { exact: true }).fill(creds.email);
+    await page.getByLabel("Password", { exact: true }).fill(creds.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(
+        page.getByRole("heading", { name: "Invoices", exact: true }),
+    ).toBeVisible();
+    await expect(
+        page.getByText("Application ready for offline use.", { exact: false }),
+    ).toBeVisible();
+    expect(
+        await page.evaluate(() => !!navigator.serviceWorker.controller),
+    ).toBe(true);
+    await expect
+        .poll(() =>
+            page.evaluate(
+                () =>
+                    (
+                        document.getElementById("app") as any
+                    ).__vue_app__.config.globalProperties.$pinia._s.get("app")
+                        .syncing,
+            ),
+        )
+        .toBe(false);
+    await context.setOffline(true);
+    const id = await localDocument(page, "First visit offline PDF");
+    await page
+        .locator('a[href="/invoices/' + id + '"]')
+        .first()
+        .click();
+    const downloaded = page.waitForEvent("download");
+    await page
+        .getByRole("button", { name: "Download PDF", exact: true })
+        .click();
+    const pdf = await downloaded;
+    expect(pdf.suggestedFilename()).toMatch(/\.pdf$/);
+    expect(await pdf.failure()).toBeNull();
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(
+        firstNavigation,
+    );
+    await expect(page.getByRole("alert")).toHaveCount(0);
+});
 
 test("customer phones are formatted and invalid numbers can be filtered and corrected offline", async ({
     page,
@@ -346,6 +535,101 @@ test("account password unlocks offline data and rejects an incorrect password", 
     await expect(page.locator(".sidebar")).toBeVisible();
 });
 
+for (const path of [
+    "/invoices/96e3e4b3-68d6-44b1-8e40-94109596c0bf/edit",
+    "/invoices/new",
+]) {
+    test(
+        "sign-in opens the invoice list instead of resuming " + path,
+        async ({ page }) => {
+            const invoiceRequests: string[] = [];
+            page.on("request", (request) => {
+                if (/\/api\/invoices\/[^/?]+/.test(request.url())) {
+                    invoiceRequests.push(request.url());
+                }
+            });
+
+            await signIn(page, path);
+
+            await expect(page).toHaveURL("/");
+            await expect(page.getByRole("alert")).toHaveCount(0);
+            await expect(page.locator(".editor-layout")).toHaveCount(0);
+            expect(invoiceRequests).toEqual([]);
+            expect(
+                await page.evaluate(() =>
+                    (
+                        document.getElementById("app") as any
+                    ).__vue_app__.config.globalProperties.$pinia._s
+                        .get("app")
+                        .invoices.some((invoice: any) => invoice.local_only),
+                ),
+            ).toBe(false);
+        },
+    );
+}
+
+test("offline sign-in opens the invoice list and retains the previous draft", async ({
+    page,
+    context,
+}) => {
+    await signIn(page);
+    await context.setOffline(true);
+    const description = "Draft retained after signing in " + Date.now();
+    const id = await localDocument(page, description);
+    await page.goto("/invoices/" + id + "/edit");
+    await expect(page.getByLabel("Item 1 description")).toHaveValue(
+        description,
+    );
+    await page.evaluate(async () => {
+        const app = (
+            document.getElementById("app") as any
+        ).__vue_app__.config.globalProperties.$pinia._s.get("app");
+        await app.flushDraft();
+        await app.lock();
+    });
+    await page.getByLabel("Email", { exact: true }).fill(creds.email);
+    await page.getByLabel("Password", { exact: true }).fill(creds.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+
+    await expect(page).toHaveURL("/");
+    await expect(
+        page.getByRole("heading", { name: "Invoices", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.goto("/invoices/" + id + "/edit");
+    await expect(page.getByLabel("Item 1 description")).toHaveValue(
+        description,
+    );
+});
+
+test("an unavailable draft link returns to the invoice list", async ({
+    page,
+}) => {
+    await signIn(page);
+    const id = "96e3e4b3-68d6-44b1-8e40-94109596c0bf";
+    await page.route("**/api/invoices/" + id, (route) =>
+        route.fulfill({
+            status: 404,
+            json: {
+                message:
+                    "No query results for model [App\\Models\\Invoice] " + id,
+            },
+        }),
+    );
+    const response = page.waitForResponse((response) =>
+        response.url().endsWith("/api/invoices/" + id),
+    );
+
+    await page.goto("/invoices/" + id + "/edit");
+
+    expect((await response).status()).toBe(404);
+    await expect(page).toHaveURL("/");
+    await expect(
+        page.getByRole("heading", { name: "Invoices", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
 test("refresh keeps the current account and saved invoice open online and offline", async ({
     page,
     context,
@@ -408,6 +692,10 @@ test("a previous device password is requested once and saved drafts survive migr
 }) => {
     await signIn(page);
     const id = await localDocument(page, "Draft kept after password migration");
+    await page.goto("/invoices/" + id + "/edit");
+    await expect(page.getByLabel("Item 1 description")).toHaveValue(
+        "Draft kept after password migration",
+    );
     await page.evaluate(async () => {
         const app = (
             document.getElementById("app") as any
@@ -431,6 +719,7 @@ test("a previous device password is requested once and saved drafts survive migr
         .fill("Previous device phrase 2026!");
     await page.getByRole("button", { name: "Use account password" }).click();
     await expect(page.locator(".sidebar")).toBeVisible();
+    await expect(page).toHaveURL("/");
 
     await context.setOffline(true);
     await page.goto("/invoices/" + id + "/edit");
@@ -718,6 +1007,275 @@ async function localDocument(page: Page, description: string, count = 1) {
         { description, count },
     );
 }
+
+test("invoice PDFs open native sharing and handle cancellation and retry", async ({
+    page,
+    context,
+}) => {
+    await page.addInitScript(() => {
+        const state = window as any;
+        state.shareCalls = [];
+        state.shareOutcome = "success";
+        Object.defineProperty(navigator, "canShare", {
+            configurable: true,
+            value: (data: ShareData) =>
+                data.files?.every((file) => file.type === "application/pdf") ??
+                false,
+        });
+        Object.defineProperty(navigator, "share", {
+            configurable: true,
+            value: async (data: ShareData) => {
+                const activated = navigator.userActivation.isActive;
+                state.shareCalls.push({
+                    activated,
+                    hasUrl: "url" in data,
+                    files: await Promise.all(
+                        (data.files ?? []).map(async (file) => ({
+                            name: file.name,
+                            type: file.type,
+                            header: await file.slice(0, 5).text(),
+                        })),
+                    ),
+                });
+                if (state.shareOutcome === "cancel")
+                    throw new DOMException("Cancelled", "AbortError");
+                if (state.shareOutcome === "error")
+                    throw new DOMException("Failed", "DataError");
+            },
+        });
+    });
+    await signIn(page);
+    await context.setOffline(true);
+    const id = await localDocument(page, "Invoice shared from phone");
+    const number = await page.evaluate(async (id) => {
+        const app = (
+            document.getElementById("app") as any
+        ).__vue_app__.config.globalProperties.$pinia._s.get("app");
+        return (await app.issue(await app.vault.get("invoice", id)))
+            .invoice_number;
+    }, id);
+    await page.goto("/invoices/" + id);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const share = page.getByRole("button", {
+        name: "Share to WhatsApp",
+        exact: true,
+    });
+    await expect(share).toBeEnabled();
+    await share.click();
+    await expect
+        .poll(() => page.evaluate(() => (window as any).shareCalls.length))
+        .toBe(1);
+    expect(await page.evaluate(() => (window as any).shareCalls[0])).toEqual({
+        activated: true,
+        hasUrl: false,
+        files: [
+            { name: number + ".pdf", type: "application/pdf", header: "%PDF-" },
+        ],
+    });
+    await page.evaluate(() => ((window as any).shareOutcome = "cancel"));
+    await share.click();
+    await expect(share).toBeEnabled();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.evaluate(() => ((window as any).shareOutcome = "error"));
+    await share.click();
+    await expect(page.getByRole("alert")).toContainText(
+        "Could not open sharing",
+    );
+    await page.evaluate(() => ((window as any).shareOutcome = "success"));
+    await share.click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(share).toBeEnabled();
+    expect(
+        await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+    ).toBe(true);
+    await page.screenshot({
+        path: "storage/test-artifacts/whatsapp-share-mobile.png",
+        fullPage: true,
+    });
+});
+
+for (const support of ["missing", "unsupported files"]) {
+    test(
+        "desktop WhatsApp sharing offers the PDF and customer chat when sharing is " +
+            support,
+        async ({ page, context }) => {
+            await page.addInitScript((support) => {
+                Object.defineProperty(navigator, "canShare", {
+                    configurable: true,
+                    value: support === "missing" ? undefined : () => false,
+                });
+                Object.defineProperty(navigator, "share", {
+                    configurable: true,
+                    value:
+                        support === "missing"
+                            ? undefined
+                            : () => {
+                                  throw new Error(
+                                      "Native sharing should not be used",
+                                  );
+                              },
+                });
+            }, support);
+            await signIn(page);
+            await context.setOffline(true);
+            const id = await localDocument(page, "Desktop WhatsApp invoice");
+            await page.goto("/invoices/" + id);
+            const share = page.getByRole("button", {
+                name: "Share to WhatsApp",
+                exact: true,
+            });
+            await expect(share).toBeEnabled();
+            await share.click();
+            const dialog = page.getByRole("dialog");
+            await expect(dialog).toContainText(
+                "Download the PDF, open WhatsApp",
+            );
+            const chatUrl = new URL(
+                (await dialog
+                    .getByRole("link", { name: "Open WhatsApp", exact: true })
+                    .getAttribute("href"))!,
+            );
+            expect(chatUrl.origin).toBe("https://wa.me");
+            expect(chatUrl.searchParams.get("text")).toContain("draft invoice");
+            expect(chatUrl.href).not.toContain("127.0.0.1");
+            const download = page.waitForEvent("download");
+            await dialog
+                .getByRole("button", { name: "Download PDF", exact: true })
+                .click();
+            expect((await download).suggestedFilename()).toBe(
+                "Sinlink-draft.pdf",
+            );
+            await expect(page.getByRole("alert")).toHaveCount(0);
+            await page.screenshot({
+                path: "storage/test-artifacts/whatsapp-share-desktop.png",
+            });
+        },
+    );
+}
+
+test("invoice car details appear inside the customer online and offline", async ({
+    page,
+    context,
+}) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await signIn(page);
+    await context.setOffline(true);
+    const stamp = Date.now();
+    const customerName = "Automatic car customer " + stamp;
+    const registration = "AUTO " + stamp;
+    await page
+        .locator(".page-heading")
+        .getByRole("link", { name: "New Invoice", exact: true })
+        .click();
+    await page
+        .getByRole("button", { name: "Create customer", exact: true })
+        .click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Name", { exact: true }).fill(customerName);
+    await dialog.getByLabel("Phone", { exact: true }).fill("0162726866");
+    await dialog
+        .getByRole("button", { name: "Save customer", exact: true })
+        .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+        page.getByRole("heading", { name: customerName, exact: true }),
+    ).toBeVisible();
+    await page
+        .getByLabel("Registration number", { exact: true })
+        .fill(registration);
+    await page.getByLabel("Car model", { exact: true }).fill("Perodua Myvi");
+    await page.getByLabel("Item 1 description").fill("Car saved with invoice");
+    await page.getByLabel("Item 1 unit price").fill("10.00");
+    expect(errors).toEqual([]);
+    await expect(
+        page.getByLabel("Registration number", { exact: true }),
+    ).toHaveValue(registration);
+    await expect(page.getByLabel("Item 1 description")).toHaveValue(
+        "Car saved with invoice",
+    );
+    await page.getByRole("button", { name: "Save Draft", exact: true }).click();
+    await expect(page).toHaveURL(/\/invoices\/[^/]+$/);
+    await page
+        .getByRole("link", { name: "Customers", exact: true })
+        .first()
+        .click();
+    await page.getByLabel("Search customers").fill(customerName);
+    await page.locator(".customer-table .customer-name").click();
+    const customerId = new URL(page.url()).pathname.split("/").pop()!;
+    const cars = page.getByRole("region", {
+        name: "Customer cars",
+        exact: true,
+    });
+    const row = cars.locator(".vehicle-row");
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText(registration);
+    await expect(row).toContainText("Perodua Myvi");
+    await row.hover();
+    await expect(row).toHaveCSS("background-color", "rgb(240, 246, 242)");
+    await row.locator(".customer-info").click();
+    await expect(dialog).toContainText(customerName);
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await cars.getByRole("button", { name: "Add car", exact: true }).click();
+    await expect(dialog.getByLabel(new RegExp(customerName))).toBeChecked();
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await cars.getByLabel("Search customer cars").fill("missing car");
+    await expect(row).toHaveCount(0);
+    await cars.getByLabel("Search customer cars").fill("");
+    await context.setOffline(false);
+    await page.evaluate(async () => {
+        await (
+            document.getElementById("app") as any
+        ).__vue_app__.config.globalProperties.$pinia._s
+            .get("app")
+            .sync();
+    });
+    await expect
+        .poll(() =>
+            page.evaluate(
+                () =>
+                    (
+                        document.getElementById("app") as any
+                    ).__vue_app__.config.globalProperties.$pinia._s
+                        .get("app")
+                        .operations.filter(
+                            (operation: any) => operation.state !== "archived",
+                        ).length,
+            ),
+        )
+        .toBe(0);
+    const canonicalCar = await page.evaluate(
+        (registration) =>
+            (
+                document.getElementById("app") as any
+            ).__vue_app__.config.globalProperties.$pinia._s
+                .get("app")
+                .vehicles.find(
+                    (vehicle: any) => vehicle.registration === registration,
+                ),
+        registration,
+    );
+    const serverCar = await (
+        await page.request.get("/api/vehicles/" + canonicalCar.id)
+    ).json();
+    expect(serverCar.customer_ids).toContain(customerId);
+    expect(serverCar.registration).toBe(registration);
+    await context.setOffline(true);
+    await page.reload();
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText(registration);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+        await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+    ).toBe(true);
+    await cars.screenshot({
+        path: "storage/test-artifacts/customer-cars-mobile.png",
+    });
+});
 
 test("offline multipage A4 and A5 PDFs, draft marking and print layout", async ({
     page,
@@ -1332,6 +1890,53 @@ test("record lists paginate online and offline and reset pages after searching",
         await expect(pagination).toContainText("1 of 1");
         await expect(page.locator(screen.rows)).toHaveCount(1);
         await expect(pagination).toContainText("Showing 1 to 1 of 1 results");
+        if (screen.name === "Cars") {
+            const row = page.locator(screen.rows);
+            await row.hover();
+            await expect(row).toHaveCSS(
+                "background-color",
+                "rgb(240, 246, 242)",
+            );
+            await row.locator(".customer-info").click();
+            const dialog = page.getByRole("dialog");
+            await expect(dialog).toContainText("MYVI");
+            await expect(dialog).toContainText(prefix + " customer 01");
+            await expect(dialog.getByRole("textbox")).toHaveCount(0);
+            await dialog
+                .getByRole("button", { name: "Edit car", exact: true })
+                .click();
+            await expect(
+                dialog.getByLabel("Registration number", { exact: true }),
+            ).toHaveValue(screen.exactQuery.toUpperCase());
+            await dialog
+                .getByRole("button", { name: "Cancel", exact: true })
+                .click();
+            await expect(dialog).toHaveCount(0);
+            await row.getByRole("button", { name: /^Edit car / }).click();
+            await expect(dialog).toHaveCount(1);
+            await expect(
+                dialog.getByLabel("Car model", { exact: true }),
+            ).toHaveValue("MYVI");
+            await dialog
+                .getByRole("button", { name: "Cancel", exact: true })
+                .click();
+            await expect(dialog).toHaveCount(0);
+            await page.setViewportSize({ width: 390, height: 844 });
+            await row.getByRole("button", { name: /^View / }).focus();
+            await page.keyboard.press("Enter");
+            await expect(dialog).toContainText(prefix + " customer 01");
+            await dialog
+                .getByRole("button", { name: "Close", exact: true })
+                .click();
+            expect(
+                await page.evaluate(
+                    () =>
+                        document.documentElement.scrollWidth <=
+                        window.innerWidth,
+                ),
+            ).toBe(true);
+            await page.setViewportSize({ width: 1440, height: 1000 });
+        }
         await page.getByLabel(screen.search).fill("No pagination matches");
         await expect(pagination).toContainText("Showing 0 to 0 of 0 results");
         await expect(
@@ -1458,7 +2063,70 @@ test("record lists paginate online and offline and reset pages after searching",
     );
     await context.setOffline(false);
     await page.getByRole("link", { name: "Staff", exact: true }).click();
-    await checkPagination("Staff", ".customer-row");
+    const staffPagination = await checkPagination("Staff", ".customer-row");
+    await staffPagination
+        .getByRole("button", { name: "Next page", exact: true })
+        .click();
+    const staffSearch = page.getByLabel("Search staff");
+    await staffSearch.fill("  " + prefix.toUpperCase() + "  ");
+    await expect(staffPagination).toContainText("Showing 1 to 5 of 26 results");
+    await staffSearch.fill("  PAGINATION-26@EXAMPLE.TEST  ");
+    await expect(staffPagination).toContainText("Showing 1 to 1 of 1 results");
+    const staffRow = page.locator(".customer-row");
+    await staffRow.hover();
+    await expect(staffRow).toHaveCSS("background-color", "rgb(240, 246, 242)");
+    await staffRow.locator(".customer-info").click();
+    const staffDialog = page.getByRole("dialog");
+    await expect(staffDialog).toContainText(fixtures.staff[25].email);
+    await expect(staffDialog.getByRole("textbox")).toHaveCount(0);
+    await staffDialog
+        .getByRole("button", { name: "Edit staff", exact: true })
+        .click();
+    await expect(staffDialog.getByLabel("Name", { exact: true })).toHaveValue(
+        fixtures.staff[25].name,
+    );
+    await staffDialog
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+    await expect(staffDialog).toHaveCount(0);
+    await staffSearch.fill("No matching teammate");
+    await expect(
+        page.getByRole("heading", { name: "No matching staff", exact: true }),
+    ).toBeVisible();
+    await expect(staffPagination).toContainText("Showing 0 to 0 of 0 results");
+    await staffSearch.fill(fixtures.staff[25].email);
+    await page.route("**/api/staff/" + fixtures.staff[25].id, async (route) => {
+        const input = route.request().postDataJSON();
+        fixtures.staff[25].email = input.email;
+        await route.fulfill({ json: fixtures.staff[25] });
+    });
+    await staffRow.getByRole("button", { name: /^Edit / }).click();
+    await expect(staffDialog).toHaveCount(1);
+    await staffDialog
+        .getByLabel("Email", { exact: true })
+        .fill("renamed-teammate@example.test");
+    await staffDialog
+        .getByRole("button", { name: "Save staff", exact: true })
+        .click();
+    await expect(staffDialog).toHaveCount(0);
+    await expect(staffSearch).toHaveValue("");
+    await expect(staffPagination).toContainText(
+        "Showing 26 to 26 of 26 results",
+    );
+    await expect(staffRow).toContainText("renamed-teammate@example.test");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await staffRow.getByRole("button", { name: /^View / }).focus();
+    await page.keyboard.press("Enter");
+    await expect(staffDialog).toContainText("renamed-teammate@example.test");
+    await staffDialog
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+    expect(
+        await page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+    ).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page
         .getByRole("link", { name: "Invoices", exact: true })
         .first()
@@ -1481,7 +2149,10 @@ test("cars can be selected and added directly while creating an invoice offline"
 }) => {
     await signIn(page);
     await context.setOffline(true);
-    await page.getByRole("link", { name: "New Invoice", exact: true }).click();
+    await page
+        .locator(".page-heading")
+        .getByRole("link", { name: "New Invoice", exact: true })
+        .click();
     const carPicker = page.getByRole("combobox", {
         name: "Select car",
         exact: true,
@@ -1593,13 +2264,13 @@ test("sign out confirms synced work and blocks queued changes and unsynced draft
     });
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     dialog = page.getByRole("dialog");
-    await expect(dialog).toContainText(
-        "Please don’t sign out yet. You have unsynced data.",
-    );
+    await expect(dialog).toContainText("Your work is saved on this device");
     await expect(
         dialog.getByRole("button", { name: "Sign out", exact: true }),
     ).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Okay", exact: true }).click();
+    await dialog
+        .getByRole("button", { name: "Keep working", exact: true })
+        .click();
 
     await context.setOffline(false);
     await page.getByRole("button", { name: "Sync now", exact: true }).click();
@@ -1618,13 +2289,13 @@ test("sign out confirms synced work and blocks queued changes and unsynced draft
     const draftId = await localDocument(page, "Sign out draft check");
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     dialog = page.getByRole("dialog");
-    await expect(dialog).toContainText(
-        "Please don’t sign out yet. You have unsynced data.",
-    );
+    await expect(dialog).toContainText("Your work is saved on this device");
     await expect(
         dialog.getByRole("button", { name: "Sign out", exact: true }),
     ).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Okay", exact: true }).click();
+    await dialog
+        .getByRole("button", { name: "Keep working", exact: true })
+        .click();
 
     await page.goto("/invoices/" + draftId + "/edit");
     await unlock(page);
@@ -1977,7 +2648,7 @@ test("simple mode lists keep contact and sale essentials readable on desktop and
     await expect(page.locator(".document-preview")).toBeVisible();
 });
 
-test("shared cars and Simple mode support mobile invoice creation, phone search and numbered downloads offline", async ({
+test("shared cars and Simple mode support single-page mobile invoice creation, phone search and numbered downloads offline", async ({
     page,
     context,
 }) => {
@@ -1998,13 +2669,19 @@ test("shared cars and Simple mode support mobile invoice creation, phone search 
     await context.setOffline(true);
     const stamp = Date.now();
     const names = ["Shared driver A " + stamp, "Shared driver B " + stamp];
-    await page.evaluate(async (names) => {
-        const app = (
-            document.getElementById("app") as any
-        ).__vue_app__.config.globalProperties.$pinia._s.get("app");
-        await app.saveCustomer({ name: names[0], phone: "0162726866" });
-        await app.saveCustomer({ name: names[1], phone: "0187654321" });
-    }, names);
+    const phones = [0, 1].map(
+        (index) => "011" + String((stamp + index) % 100000000).padStart(8, "0"),
+    );
+    await page.evaluate(
+        async ({ names, phones }) => {
+            const app = (
+                document.getElementById("app") as any
+            ).__vue_app__.config.globalProperties.$pinia._s.get("app");
+            await app.saveCustomer({ name: names[0], phone: phones[0] });
+            await app.saveCustomer({ name: names[1], phone: phones[1] });
+        },
+        { names, phones },
+    );
     await page.getByRole("link", { name: "Cars", exact: true }).click();
     await page.getByRole("button", { name: "Create car", exact: true }).click();
     const registration = "CAR " + stamp;
@@ -2034,15 +2711,36 @@ test("shared cars and Simple mode support mobile invoice creation, phone search 
     await expect(newInvoice).toBeDisabled();
     await expect(newInvoice).toHaveAttribute("aria-current", "page");
     await expect(newInvoice).toContainText("In progress");
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText(
-        "select or create a customer first",
+    await expect(
+        page.getByRole("navigation", { name: "Invoice steps" }),
+    ).toHaveCount(0);
+    await expect(
+        page.getByRole("heading", { name: "Customer", exact: true }),
+    ).toBeVisible();
+    await expect(
+        page.getByRole("heading", { name: "Invoice details", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel("Item 1 description")).toBeVisible();
+    await expect(page.getByLabel("Remarks")).toBeVisible();
+    await expect(
+        page.getByRole("button", { name: "Issue Invoice", exact: true }),
+    ).toBeVisible();
+    await page.getByLabel("Item 1 description").fill("Shared car fitting");
+    await page.getByLabel("Item 1 quantity").fill("2");
+    await page.getByLabel("Item 1 unit price").fill("12345.67");
+    await expect(page.locator(".line-amount")).toContainText("24,691.34");
+    await expect(page.locator(".summary-total strong")).toContainText(
+        "24,691.34",
     );
-    await expect(page.locator(".simple-steps")).toContainText(
-        "Step 1 of 3 · Customer",
+    await page.getByLabel("Remarks").fill("Single-page sale");
+    await page
+        .getByRole("button", { name: "Issue Invoice", exact: true })
+        .click();
+    await expect(page.getByRole("alert")).toContainText(
+        "Select a customer before saving or issuing.",
     );
     const phone = page.getByLabel("Find customer by mobile number");
-    await phone.fill("0162726866");
+    await phone.fill(phones[0]!);
     await expect(phone).toHaveAttribute("inputmode", "tel");
     expect(
         await phone.evaluate((element) =>
@@ -2050,9 +2748,6 @@ test("shared cars and Simple mode support mobile invoice creation, phone search 
         ),
     ).toBeGreaterThanOrEqual(17);
     await page.getByRole("button", { name: new RegExp(names[0]!) }).click();
-    await expect(page.locator(".simple-steps")).toContainText(
-        "Step 2 of 3 · Car and date",
-    );
     await expect(page.getByRole("alert")).toHaveCount(0);
     await page.screenshot({
         path: "storage/test-artifacts/simple-invoice-in-progress.png",
@@ -2064,10 +2759,27 @@ test("shared cars and Simple mode support mobile invoice creation, phone search 
     await expect(
         page.getByLabel("Registration number", { exact: true }),
     ).toHaveValue(registration);
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-    await page.getByLabel("Item 1 description").fill("Shared car fitting");
-    await page.getByLabel("Item 1 quantity").fill("1");
-    await page.getByLabel("Item 1 unit price").fill("40.00");
+    for (const width of [390, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+            await page.evaluate(
+                () => document.documentElement.scrollWidth <= window.innerWidth,
+            ),
+        ).toBe(true);
+        const cards = await page.locator(".editor-main > .card").all();
+        for (let index = 1; index < cards.length; index++) {
+            const previous = (await cards[index - 1].boundingBox())!;
+            const current = (await cards[index].boundingBox())!;
+            expect(
+                current.y - previous.y - previous.height,
+            ).toBeGreaterThanOrEqual(30);
+        }
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByLabel("Item 1 description")).toHaveValue(
+        "Shared car fitting",
+    );
+    await expect(page.getByLabel("Remarks")).toHaveValue("Single-page sale");
     await page
         .getByRole("button", { name: "Issue Invoice", exact: true })
         .click();
@@ -2077,6 +2789,15 @@ test("shared cars and Simple mode support mobile invoice creation, phone search 
     ).toBeVisible();
     await expect(page.locator("h1").first()).toHaveText(/^\d{5,}$/);
     const number = (await page.locator("h1").first().textContent())!.trim();
+    const invoiceAmounts = page.locator(
+        ".document-preview .invoice-sheet text",
+    );
+    await expect(
+        invoiceAmounts.filter({ hasText: /^12,345\.67$/ }),
+    ).toHaveCount(1);
+    await expect(
+        invoiceAmounts.filter({ hasText: /^24,691\.34$/ }),
+    ).toHaveCount(3);
     const download = page.waitForEvent("download");
     await page
         .getByRole("button", { name: "Download PDF", exact: true })
@@ -2088,7 +2809,7 @@ test("shared cars and Simple mode support mobile invoice creation, phone search 
         .getByRole("link", { name: "Invoices", exact: true })
         .first()
         .click();
-    await page.getByLabel("Search invoices").fill("0162726866");
+    await page.getByLabel("Search invoices").fill(phones[0]!);
     await expect(
         page
             .getByRole("link", { name: new RegExp("^" + number + "\\s") })

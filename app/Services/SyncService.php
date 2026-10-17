@@ -10,6 +10,7 @@ use App\Models\Vehicle;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SyncService
@@ -213,6 +214,7 @@ class SyncService
                 $invoice->items()->create($line);
             }
             $this->event($invoice, $op['type'] === 'invoice.issue' ? 'issued' : 'draft_saved', $op, $actor, null, ['number_value' => $attrs['number_value'] ?? null, 'version' => $invoice->version]);
+            $this->linkInvoiceVehicle($invoice);
         }
         $data = $invoice->fresh()->load(['items', 'creator', 'events', 'replacements'])->toArray();
         BillingFeed::append('invoice', $invoice->id, $data);
@@ -222,6 +224,33 @@ class SyncService
         }
 
         return ['entity_type' => 'invoice', 'entity' => $data];
+    }
+
+    private function linkInvoiceVehicle(Invoice $invoice): void
+    {
+        $registration = strtoupper(trim($invoice->vehicle_registration ?? ''));
+        $normalizedRegistration = Vehicle::normalizeRegistration($registration);
+        if ($normalizedRegistration === '') {
+            return;
+        }
+        $vehicle = Vehicle::firstOrNew(['normalized_registration' => $normalizedRegistration]);
+        $created = ! $vehicle->exists;
+        if ($created) {
+            $vehicle->fill([
+                'id' => (string) Str::uuid(),
+                'registration' => $registration,
+                'car_model' => trim($invoice->car_model ?? '') ?: 'Unspecified',
+                'created_by' => $invoice->created_by,
+                'version' => 1,
+            ])->save();
+        }
+        $links = $vehicle->customers()->syncWithoutDetaching([$invoice->customer_id]);
+        if (! $created && $links['attached'] !== []) {
+            $vehicle->update(['version' => $vehicle->version + 1]);
+        }
+        if ($created || $links['attached'] !== []) {
+            BillingFeed::append('vehicle', $vehicle->id, $vehicle->load('customers')->toArray());
+        }
     }
 
     private function event(Invoice $invoice, string $type, array $op, User $actor, ?string $reason = null, array $metadata = []): void

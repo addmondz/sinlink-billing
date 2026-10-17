@@ -12,10 +12,10 @@
     font-family: Noto, Arial, sans-serif;
     color: #243b35;
     background: #f4f6f5;
-    font-size: 14px;
+    font-size: 16px;
     font-synthesis: none;
     --green: #0f4c45;
-    --muted: #73827b;
+    --muted: #52645c;
     --border: #e1e7e3;
     --surface: #fff;
 }
@@ -123,7 +123,7 @@ textarea {
 }
 input::placeholder,
 textarea::placeholder {
-    color: #98a39d;
+    color: #65766d;
 }
 input:focus,
 select:focus,
@@ -248,9 +248,9 @@ details[open] > summary {
     justify-content: center;
     border: 0;
     background: transparent;
-    color: #6c8076;
-    min-width: 36px;
-    min-height: 36px;
+    color: #52645c;
+    min-width: 44px;
+    min-height: 44px;
     border-radius: 6px;
     flex-shrink: 0;
 }
@@ -2564,7 +2564,7 @@ dialog .stack {
     min-width: 44px;
 }
 .simple-mode .invoices-panel .invoice-table th {
-    font-size: 13px;
+    font-size: 16px;
     padding: 12px 18px;
     text-transform: none;
     letter-spacing: 0;
@@ -2629,7 +2629,7 @@ dialog .stack {
 }
 .simple-mode .invoices-panel .invoice-card p.attention {
     grid-column: 1 / -1;
-    color: #a17b43;
+    color: #805b19;
 }
 @media (max-width: 800px) {
     .simple-mode .simple-list-heading {
@@ -2660,5 +2660,270 @@ dialog .stack {
     }
     .simple-mode .simple-list-panel .pagination {
         padding: 12px 16px;
+    }
+}
+
+:is(.page, .auth-card, dialog)
+    :is(
+        p,
+        label,
+        input,
+        textarea,
+        select,
+        button,
+        .button,
+        .hint,
+        .small,
+        .text-button
+    ) {
+    font-size: 1rem;
+    line-height: 1.6;
+}
+:is(.page, .auth-card, dialog) :is(input, textarea, select, .button) {
+    min-height: 48px;
+}
+.simple-mode .page input[type="checkbox"],
+:is(.page, .auth-card, dialog) input[type="checkbox"] {
+    width: 24px;
+    min-height: 24px;
+}
+:is(.page, .auth-card, dialog) .text-button {
+    min-height: 44px;
+}
+:is(.page, .auth-card, dialog)
+    :is(input, textarea, select)[aria-invalid="true"] {
+    border: 2px solid #a73333;
+}
+.error:focus {
+    outline: 3px solid #a73333;
+    outline-offset: 3px;
+}
+.page
+    :is(
+        .dataset-note,
+        .list-footer,
+        .sync-state,
+        .pagination,
+        .pagination-size,
+        .date-filter
+    ) {
+    font-size: 14px;
+    color: var(--muted);
+}
+.page :is(.invoice-table, .customer-table) {
+    font-size: 16px;
+}
+.page :is(.invoice-table, .customer-table) th {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+}
+.page :is(.invoice-table, .customer-table) td {
+    color: #40574f;
+}
+.page :is(.invoice-table, .customer-table) td small {
+    font-size: 14px;
+    color: var(--muted);
+}
+.page .invoice-number {
+    font-size: 16px;
+}
+.page
+    :is(
+        .invoice-card p,
+        .invoice-card > small,
+        .empty-state p,
+        .item-head,
+        .item-entry label > span
+    ) {
+    color: var(--muted);
+}
+.page .item-head {
+    font-size: 14px;
+}
+.page :is(.saved-indicator, .summary-note, .summary-note span, .amount-words) {
+    font-size: 14px;
+    color: var(--muted);
+}
+.page :is(.list-footer a, .output-buttons button) {
+    font-size: 16px;
+    color: var(--green);
+    min-height: 44px;
+}
+.page h2 {
+    font-size: 22px;
+}
+.page .status {
+    font-size: 14px;
+}
+.page .status.issued {
+    color: #36603b;
+}
+.page .status.draft {
+    color: #7c591a;
+}
+.page .status.cancelled {
+    color: #963c35;
+}
+.page .attention {
+    color: #805b19 !important;
+}
+.invoice-table-wrap,
+.customer-table-wrap {
+    overflow-x: auto;
+}
+.tabs {
+    flex-wrap: wrap;
+    gap: 12px;
+}
+.tabs button {
+    min-height: 44px;
+    color: var(--muted);
+}
+.pagination .button {
+    min-width: 44px;
+    padding: 8px;
+}
+.pagination-controls {
+    gap: 4px;
+}
+.date-filter {
+    flex: 0 1 190px;
+}
+.filters .search-field {
+    flex: 1 1 300px;
+    max-width: none;
+}
+.date-filter input {
+    flex: 1;
+    width: 140px;
+}
+.sidebar {
+    overflow-y: auto;
+}
+.sidebar nav a {
+    font-size: 16px;
+    color: var(--muted);
+}
+.sidebar :is(.sync-link, .install-link, .user-card) {
+    font-size: 16px;
+    color: #40574f;
+}
+.sidebar :is(.sync-link small, .user-card small, .count-badge) {
+    font-size: 14px;
+    color: var(--muted);
+}
+.nav-caption {
+    font-size: 12px;
+    color: var(--muted);
+}
+.user-card {
+    flex-wrap: wrap;
+}
+.signout-button {
+    width: 100%;
+    gap: 8px;
+    font-size: 16px;
+}
+.topbar {
+    min-height: 76px;
+    height: auto;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+.shop-label,
+.connection {
+    font-size: 14px;
+    color: var(--muted);
+}
+.display-toggle {
+    min-height: 44px;
+    font-size: 16px;
+    margin-left: auto;
+}
+.display-toggle[aria-pressed="true"] {
+    background: #e7f1ed;
+    border-color: var(--green);
+    color: var(--green);
+}
+.connection {
+    flex-wrap: wrap;
+}
+.connection .icon-button {
+    gap: 6px;
+    font-size: 14px;
+    padding: 4px;
+}
+.discard-confirmation {
+    background: #fff4df;
+    color: #654716;
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+.discard-confirmation .form-actions {
+    margin-top: 12px;
+}
+.local-drafts a {
+    display: inline-block;
+    padding: 10px 0;
+    text-decoration: underline;
+}
+.invoice-date {
+    grid-column: 1 / -1;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--muted);
+}
+.simple-mode .invoices-panel .status {
+    font-size: 14px;
+}
+@media (max-width: 800px) {
+    .topbar {
+        padding: 12px 14px;
+    }
+    .connection {
+        flex-basis: 100%;
+    }
+    .connection > span:nth-child(2) {
+        flex: 1;
+        min-width: 0;
+    }
+    .sync-button-label {
+        display: none;
+    }
+    .display-toggle {
+        padding: 8px 12px;
+    }
+    .mobile-nav > :is(a, button) {
+        min-width: 0;
+        min-height: 56px;
+        flex: 1;
+        font-size: 12px;
+        color: var(--muted);
+    }
+    .mobile-nav > .new-tab {
+        flex: 0 1 auto;
+    }
+    .page .tabs button {
+        font-size: 14px;
+        padding: 12px 0;
+    }
+    .toast {
+        left: 14px;
+        right: 14px;
+        bottom: calc(104px + env(safe-area-inset-bottom));
+        font-size: 14px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition: none !important;
+        animation: none !important;
     }
 }

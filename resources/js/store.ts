@@ -242,7 +242,58 @@ export const useApp = defineStore("app", () => {
             })),
         }));
         customers.value = cus;
-        vehicles.value = cars;
+        const linkedCars = new Map(
+            cars.map((car) => [
+                normalizeRegistration(car.registration),
+                { ...car, customer_ids: [...car.customer_ids] },
+            ]),
+        );
+        const pendingInvoices = new Set(
+            ops
+                .filter(
+                    (operation) =>
+                        operation.state !== "archived" &&
+                        ["invoice.save", "invoice.issue"].includes(
+                            operation.type,
+                        ),
+                )
+                .map((operation) => operation.entity_id),
+        );
+        for (const invoice of ins) {
+            if (
+                !invoice.local_only &&
+                !invoice.local_dirty &&
+                !pendingInvoices.has(invoice.id)
+            )
+                continue;
+            const registration = (invoice.vehicle_registration ?? "")
+                .trim()
+                .toUpperCase();
+            const normalized = normalizeRegistration(registration);
+            if (
+                !normalized ||
+                !cus.some((customer) => customer.id === invoice.customer_id)
+            )
+                continue;
+            const existing = linkedCars.get(normalized);
+            if (existing) {
+                if (!existing.customer_ids.includes(invoice.customer_id)) {
+                    existing.customer_ids.push(invoice.customer_id);
+                }
+            } else {
+                linkedCars.set(normalized, {
+                    id: invoice.id,
+                    registration,
+                    normalized_registration: normalized,
+                    car_model:
+                        (invoice.car_model ?? "").trim() || "Unspecified",
+                    customer_ids: [invoice.customer_id],
+                    version: 0,
+                    created_by: invoice.created_by,
+                });
+            }
+        }
+        vehicles.value = [...linkedCars.values()];
         operations.value = ops.sort(
             (a, b) => a.created_order - b.created_order,
         );

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { computed, inject, reactive, ref, useId } from "vue";
 import { useApp } from "../store";
-import type { Customer } from "../lib/types";
+import { formatPhone, type Customer } from "../lib/types";
+import FormError from "./FormError.vue";
 const props = defineProps<{ customer?: Partial<Customer>; prefill?: string }>(),
     emit = defineEmits<{ saved: [Customer]; cancel: [] }>(),
     app = useApp();
@@ -13,6 +14,13 @@ const form = reactive<Partial<Customer>>({
 });
 const error = ref(""),
     busy = ref(false);
+const requestClose = inject<() => void>("requestModalClose", () =>
+    emit("cancel"),
+);
+const errorId = useId();
+const invalidPhone = computed(
+    () => !!error.value && !formatPhone(form.phone ?? ""),
+);
 async function submit() {
     busy.value = true;
     error.value = "";
@@ -27,8 +35,8 @@ async function submit() {
 }
 </script>
 <template>
-    <form class="form-grid" @submit.prevent="submit">
-        <p v-if="error" class="error span-full" role="alert">{{ error }}</p>
+    <form class="form-grid" :aria-busy="busy" @submit.prevent="submit">
+        <FormError :id="errorId" :message="error" class="span-full" />
         <label
             >Name
             <input
@@ -44,6 +52,8 @@ async function submit() {
                 required
                 maxlength="80"
                 type="tel"
+                :aria-invalid="invalidPhone || undefined"
+                :aria-describedby="invalidPhone ? errorId : undefined"
                 placeholder="0162726866 or +60162726866"
                 autocomplete="tel" /></label
         ><label class="span-full"
@@ -65,7 +75,8 @@ async function submit() {
             <button
                 type="button"
                 class="button secondary"
-                @click="emit('cancel')"
+                :disabled="busy"
+                @click="requestClose"
             >
                 Cancel</button
             ><button class="button primary" :disabled="busy">

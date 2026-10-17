@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute } from "vue-router";
-import { Printer, Download, ArrowLeft, PenLine, Copy, Eye } from "@lucide/vue";
+import {
+    Printer,
+    Download,
+    Share2,
+    ArrowLeft,
+    PenLine,
+    Copy,
+    Eye,
+} from "@lucide/vue";
 import { useApp } from "../store";
 import { api } from "../lib/api";
-import type { Invoice } from "../lib/types";
+import { formatPhone, type Invoice } from "../lib/types";
 import { money } from "../lib/money";
-import { downloadPdf } from "../lib/document";
+import { downloadPdf, invoicePdfFile } from "../lib/document";
 import InvoiceDocument from "../components/InvoiceDocument.vue";
 import Modal from "../components/Modal.vue";
 const app = useApp(),
@@ -15,15 +23,93 @@ const app = useApp(),
     cancelModal = ref(false),
     reason = ref(""),
     busy = ref(false),
-    pdfBusy = ref(false);
+    pdfBusy = ref(false),
+    shareFile = shallowRef<File>(),
+    preparingShare = ref(false),
+    sharing = ref(false),
+    shareError = ref(""),
+    showWhatsApp = ref(false),
+    sharingSupported = ref(
+        typeof navigator.share === "function" &&
+            typeof navigator.canShare === "function",
+    );
 const invoice = computed(() =>
     app.invoices.find((i) => i.id === route.params.id),
 );
+const whatsAppUrl = computed(() => {
+    const record = invoice.value;
+    if (!record) return "https://wa.me/";
+    const phone =
+        formatPhone(record.customer_snapshot.phone ?? "")?.replace(/\D/g, "") ??
+        "";
+    const reference = record.invoice_number
+        ? "invoice " + record.invoice_number
+        : "draft invoice";
+    const message =
+        "Hello " +
+        (record.customer_snapshot.name || "") +
+        ", here is your " +
+        reference +
+        " from " +
+        record.company_snapshot.company_name +
+        ".";
+    return (
+        "https://wa.me/" + phone + "?" + new URLSearchParams({ text: message })
+    );
+});
 const ops = computed(() =>
     app.operations.filter(
         (o) => o.entity_id === invoice.value?.id && o.state !== "archived",
     ),
 );
+let preparation = 0;
+async function prepareShare(record: Invoice | undefined) {
+    const version = ++preparation;
+    shareFile.value = undefined;
+    shareError.value = "";
+    preparingShare.value = false;
+    if (!record || !sharingSupported.value) return;
+    preparingShare.value = true;
+    try {
+        const file = await invoicePdfFile(record);
+        if (version !== preparation) return;
+        if (navigator.canShare({ files: [file] })) {
+            shareFile.value = file;
+        } else {
+            sharingSupported.value = false;
+        }
+    } catch {
+        if (version === preparation) {
+            shareError.value =
+                "Could not prepare the PDF for sharing. Try again or use Download PDF.";
+        }
+    } finally {
+        if (version === preparation) preparingShare.value = false;
+    }
+}
+watch(invoice, prepareShare, { immediate: true });
+async function share() {
+    if (!sharingSupported.value) {
+        showWhatsApp.value = true;
+        return;
+    }
+    if (!shareFile.value || sharing.value) return;
+    sharing.value = true;
+    shareError.value = "";
+    try {
+        await navigator.share({
+            files: [shareFile.value],
+            title: shareFile.value.name,
+        });
+    } catch (e) {
+        if (!(e instanceof DOMException && e.name === "AbortError")) {
+            shareError.value =
+                "Could not open sharing. Try again or download the PDF and attach it in WhatsApp.";
+        }
+    } finally {
+        sharing.value = false;
+    }
+}
 onMounted(async () => {
     if (!invoice.value) {
         try {
@@ -94,6 +180,21 @@ function print() {
                 ><PenLine :size="17" />Edit Draft</RouterLink
             ><button
                 class="button secondary"
+                :disabled="
+                    !invoice ||
+                    preparingShare ||
+                    sharing ||
+                    (sharingSupported && !shareFile)
+                "
+                aria-describedby="invoice-sharing-help"
+                @click="share"
+            >
+                <Share2 :size="17" />{{
+                    preparingShare ? "Preparing share…" : "Share to WhatsApp"
+                }}
+            </button>
+            <button
+                class="button secondary"
                 :disabled="!invoice"
                 @click="print"
             >
@@ -109,7 +210,46 @@ function print() {
             </button>
         </div>
     </div>
+    <p v-if="invoice" id="invoice-sharing-help" class="hint no-print">
+        {{
+            sharingSupported
+                ? "Share the PDF and choose WhatsApp from your phone’s share menu."
+                : "Download the PDF and open the customer’s WhatsApp chat."
+        }}
+    </p>
+    <p v-if="shareError" class="error no-print" role="alert">
+        {{ shareError }}
+        <button
+            v-if="!shareFile"
+            class="text-button"
+            :disabled="preparingShare"
+            @click="prepareShare(invoice)"
+        >
+            Try again
+        </button>
+    </p>
     <p v-if="error" class="error no-print" role="alert">{{ error }}</p>
+    <Modal v-if="showWhatsApp && invoice" @close="showWhatsApp = false">
+        <template #title><h2>Send invoice in WhatsApp</h2></template>
+        <p>
+            Download the PDF, open WhatsApp, then attach the file in your chat.
+        </p>
+        <div class="form-actions">
+            <button class="button secondary" :disabled="pdfBusy" @click="pdf">
+                <Download :size="17" />{{
+                    pdfBusy ? "Preparing…" : "Download PDF"
+                }}
+            </button>
+            <a
+                :href="whatsAppUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="button primary"
+            >
+                Open WhatsApp
+            </a>
+        </div>
+    </Modal>
     <template v-if="invoice"
         ><div class="detail-strip no-print">
             <span :class="['status', invoice.status]">{{ invoice.status }}</span

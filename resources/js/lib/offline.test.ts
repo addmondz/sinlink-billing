@@ -91,6 +91,103 @@ function store(v: Vault) {
     return app;
 }
 describe("financial and offline guarantees", () => {
+    it("shows cars entered on saved invoices offline and merges the synchronized car by registration", async () => {
+        const app = store(vault);
+        const first = await app.saveCustomer({
+            name: "First driver",
+            phone: "0162726866",
+        });
+        const second = await app.saveCustomer({
+            name: "Second driver",
+            phone: "0123456789",
+        });
+        for (const [customer, registration] of [
+            [first, "vdr 4118"],
+            [second, "VDR-4118"],
+        ] as const) {
+            await app.persistDraft({
+                ...draft(),
+                customer_id: customer.id,
+                vehicle_registration: registration,
+                car_model: "MYVI",
+            });
+        }
+
+        expect(app.vehicles).toHaveLength(1);
+        expect(app.vehicles[0]?.normalized_registration).toBe("VDR4118");
+        expect(app.vehicles[0]?.customer_ids.sort()).toEqual(
+            [first.id, second.id].sort(),
+        );
+        const canonicalId = uuid();
+        await vault.put("vehicle", canonicalId, {
+            ...app.vehicles[0],
+            id: canonicalId,
+            version: 1,
+        });
+        await app.refresh();
+
+        expect(app.vehicles).toHaveLength(1);
+        expect(app.vehicles[0]?.id).toBe(canonicalId);
+        expect(app.vehicles[0]?.customer_ids).toHaveLength(2);
+    });
+    it("links invoice cars to additional customers locally without changing existing car details", async () => {
+        const app = store(vault);
+        const first = await app.saveCustomer({
+            name: "First driver",
+            phone: "0162726866",
+        });
+        const second = await app.saveCustomer({
+            name: "Second driver",
+            phone: "0123456789",
+        });
+        const vehicle = await app.saveVehicle({
+            registration: "VDR 4118",
+            car_model: "MYVI",
+            customer_ids: [first.id],
+        });
+
+        await app.persistDraft(
+            {
+                ...draft(),
+                customer_id: second.id,
+                vehicle_registration: "VDR-4118",
+                car_model: "Invoice snapshot",
+            },
+            true,
+        );
+
+        expect(app.vehicles).toHaveLength(1);
+        expect(app.vehicles[0]?.id).toBe(vehicle.id);
+        expect(app.vehicles[0]?.car_model).toBe("MYVI");
+        expect(app.vehicles[0]?.customer_ids).toEqual([first.id, second.id]);
+    });
+    it("shows a registration without a model and skips incomplete invoices without customers or registrations", async () => {
+        const app = store(vault);
+        const customer = await app.saveCustomer({
+            name: "Driver",
+            phone: "0162726866",
+        });
+        await app.persistDraft({
+            ...draft(),
+            customer_id: "",
+            vehicle_registration: "ABC 1234",
+        });
+        await app.persistDraft({
+            ...draft(),
+            customer_id: customer.id,
+            vehicle_registration: "",
+        });
+        expect(app.vehicles).toHaveLength(0);
+
+        await app.persistDraft({
+            ...draft(),
+            customer_id: customer.id,
+            vehicle_registration: "ABC 1234",
+        });
+
+        expect(app.vehicles[0]?.car_model).toBe("Unspecified");
+        expect(app.vehicles[0]?.customer_ids).toEqual([customer.id]);
+    });
     it("keeps one shared car, its customer links and queued operation through backup restore", async () => {
         const app = store(vault);
         const first = await app.saveCustomer({

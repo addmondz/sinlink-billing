@@ -95,6 +95,12 @@ const syncState = (i: Invoice) => {
               ? "Saved on device"
               : "Synced";
 };
+const formatDate = (value: string): string =>
+    new Intl.DateTimeFormat("en-MY", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+    }).format(new Date(value + "T00:00:00"));
 async function fetchList() {
     const n = ++generation;
     if (!app.online || app.needsAuth) {
@@ -292,9 +298,11 @@ onUnmounted(() => clearTimeout(timer));
                                     i.invoice_number ||
                                     "Draft · " + i.id.slice(0, 6)
                                 }}</RouterLink
-                            ><small v-if="!app.user?.simple_mode">{{
-                                i.invoice_date
-                            }}</small>
+                            ><small
+                                ><time :datetime="i.invoice_date">{{
+                                    formatDate(i.invoice_date)
+                                }}</time></small
+                            >
                             <small
                                 v-if="
                                     app.user?.simple_mode &&
@@ -382,6 +390,9 @@ onUnmounted(() => clearTimeout(timer));
                         }}
                     </h3>
                     <p>{{ i.customer_snapshot.phone || "No phone saved" }}</p>
+                    <time class="invoice-date" :datetime="i.invoice_date">{{
+                        formatDate(i.invoice_date)
+                    }}</time>
                     <p
                         v-if="
                             ['Conflict', 'Needs attention'].includes(

@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { amountWords } from "./money";
+import { amountWords, formatAmount } from "./money";
 import { formatInvoiceNumber, type Invoice } from "./types";
 
 export const referenceCompany = {
@@ -31,7 +31,8 @@ export function documentModel(invoice: Invoice) {
                 : invoice.status === "cancelled"
                   ? "CANCELLED"
                   : "",
-        number: formatInvoiceNumber(invoice.invoice_number) ?? "Unnumbered draft",
+        number:
+            formatInvoiceNumber(invoice.invoice_number) ?? "Unnumbered draft",
         words: amountWords(invoice.total_cents).replace(
             /^RINGGIT MALAYSIA /,
             "",
@@ -222,16 +223,9 @@ export function invoiceLayout(
                     false,
                     "center",
                 );
+                text(formatAmount(item.unit_price), 461, y, 9, false, "right");
                 text(
-                    Number(item.unit_price).toFixed(2),
-                    461,
-                    y,
-                    9,
-                    false,
-                    "right",
-                );
-                text(
-                    (item.amount_cents / 100).toFixed(2),
+                    formatAmount(item.amount_cents / 100),
                     565,
                     y,
                     9,
@@ -268,7 +262,7 @@ export function invoiceLayout(
     line(437, 579, 577);
     text("SUBTOTAL :", 425, 592, 8, true);
     text(
-        (invoice.subtotal_cents / 100).toFixed(2),
+        formatAmount(invoice.subtotal_cents / 100),
         566,
         592,
         9,
@@ -279,7 +273,7 @@ export function invoiceLayout(
     text("TOTAL QUANTITY :", 183, 636, 8, true);
     text(Number(invoice.total_quantity).toString(), 303, 636, 9);
     text("TOTAL AMOUNT :", 412, 636, 8, true);
-    text((invoice.total_cents / 100).toFixed(2), 566, 636, 10, true, "right");
+    text(formatAmount(invoice.total_cents / 100), 566, 636, 10, true, "right");
     line(22, 641, 577);
     terms
         .slice(0, 5)
@@ -345,7 +339,15 @@ function fonts() {
                 value += String.fromCharCode(...bytes.subarray(i, i + 8192));
             return btoa(value);
         }),
-    ) as Promise<[string, string, string]>);
+    ).catch((error) => {
+        fontPromise = undefined;
+        if (error instanceof TypeError) {
+            throw new Error(
+                "Invoice fonts are not available. Connect to the internet and reload this page, then try the PDF again.",
+            );
+        }
+        throw error;
+    }) as Promise<[string, string, string]>);
 }
 export async function invoicePdf(invoice: Invoice): Promise<jsPDF> {
     const doc = new jsPDF({
@@ -399,11 +401,16 @@ export async function invoicePdf(invoice: Invoice): Promise<jsPDF> {
 }
 export function invoiceFilename(invoice: Invoice): string {
     return (
-        (formatInvoiceNumber(invoice.invoice_number) ?? "Sinlink-draft").replace(
-            /[<>:"/\\|?*\x00-\x1f]/g,
-            "_",
-        ) + ".pdf"
+        (
+            formatInvoiceNumber(invoice.invoice_number) ?? "Sinlink-draft"
+        ).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") + ".pdf"
     );
+}
+export async function invoicePdfFile(invoice: Invoice): Promise<File> {
+    const doc = await invoicePdf(invoice);
+    return new File([doc.output("blob")], invoiceFilename(invoice), {
+        type: "application/pdf",
+    });
 }
 export async function downloadPdf(invoice: Invoice) {
     const doc = await invoicePdf(invoice);

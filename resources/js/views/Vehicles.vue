@@ -4,6 +4,7 @@ import { Plus, PenLine, Car } from "@lucide/vue";
 import { useApp } from "../store";
 import { normalizeRegistration, type Vehicle } from "../lib/types";
 import VehicleForm from "../components/VehicleForm.vue";
+import VehicleDetails from "../components/VehicleDetails.vue";
 import Modal from "../components/Modal.vue";
 import ListingPanel from "../components/ListingPanel.vue";
 import { usePagination } from "../lib/pagination";
@@ -41,11 +42,6 @@ const list = computed(() =>
 const { page, pageSize, pageCount, pagedRecords, resetPage } =
     usePagination(list);
 watch(search, resetPage);
-const viewingCustomers = computed(() =>
-    app.customers.filter((customer) =>
-        viewing.value?.customer_ids.includes(customer.id),
-    ),
-);
 function edit(vehicle?: Vehicle) {
     viewing.value = undefined;
     editing.value = vehicle;
@@ -110,41 +106,12 @@ function edit(vehicle?: Vehicle) {
             </button>
         </template>
     </ListingPanel>
-    <Modal v-if="viewing" @close="viewing = undefined">
-        <template #title><h2>{{ viewing.registration }}</h2></template>
-        <dl class="customer-details">
-            <div>
-                <dt>Registration number</dt>
-                <dd>{{ viewing.registration }}</dd>
-            </div>
-            <div>
-                <dt>Car model</dt>
-                <dd>{{ viewing.car_model }}</dd>
-            </div>
-            <div class="span-full">
-                <dt>Linked customers</dt>
-                <dd v-for="customer in viewingCustomers" :key="customer.id">
-                    <RouterLink :to="'/customers/' + customer.id">{{
-                        customer.name
-                    }}</RouterLink>
-                    · {{ customer.phone }}
-                </dd>
-                <dd v-if="!viewingCustomers.length">No linked customers on this device</dd>
-            </div>
-            <div class="span-full">
-                <dt>Notes</dt>
-                <dd class="preserve">{{ viewing.notes || "—" }}</dd>
-            </div>
-        </dl>
-        <div class="form-actions">
-            <button class="button secondary" @click="viewing = undefined">
-                Close
-            </button>
-            <button class="button primary" @click="edit(viewing)">
-                <PenLine :size="18" />Edit car
-            </button>
-        </div>
-    </Modal>
+    <VehicleDetails
+        v-if="viewing"
+        :vehicle="viewing"
+        @close="viewing = undefined"
+        @edit="edit"
+    />
     <Modal v-if="form" @close="form = false"
         ><template #title
             ><h2>{{ editing ? "Edit car" : "Create car" }}</h2></template

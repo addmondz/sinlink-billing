@@ -12,8 +12,8 @@ import {
     ArrowLeft,
 } from "@lucide/vue";
 import { useApp } from "../store";
-import { api } from "../lib/api";
-import { calculate, money, amountWords } from "../lib/money";
+import { api, ApiError } from "../lib/api";
+import { calculate, money, amountWords, formatAmount } from "../lib/money";
 import {
     uuid,
     todayKL,
@@ -29,6 +29,7 @@ import CustomerForm from "../components/CustomerForm.vue";
 import VehicleForm from "../components/VehicleForm.vue";
 import InvoiceDocument from "../components/InvoiceDocument.vue";
 import Modal from "../components/Modal.vue";
+import FormError from "../components/FormError.vue";
 const app = useApp(),
     route = useRoute(),
     router = useRouter(),
@@ -287,6 +288,10 @@ onMounted(async () => {
         app.setDraftFlusher(flush);
         window.addEventListener("beforeunload", warn);
     } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+            await router.replace("/");
+            return;
+        }
         error.value = (e as Error).message;
     }
 });
@@ -341,7 +346,7 @@ onUnmounted(() => {
             ><Check :size="16" />{{ saved }}</span
         >
     </div>
-    <p v-if="error" role="alert" class="error">{{ error }}</p>
+    <FormError id="invoice-error" :message="error" />
     <form v-if="model && ready" class="editor-layout" @submit.prevent="issue">
         <div class="editor-main">
             <section class="card">
@@ -365,11 +370,19 @@ onUnmounted(() => {
                         ><Search :size="19" /><input
                             v-model="search"
                             aria-label="Find customer by mobile number"
+                            :aria-invalid="
+                                (!!error && !model.customer_id) || undefined
+                            "
+                            :aria-describedby="
+                                error && !model.customer_id
+                                    ? 'invoice-error customer-search-help'
+                                    : 'customer-search-help'
+                            "
                             placeholder="Enter customer mobile number"
                             inputmode="tel"
                             autocomplete="off"
                     /></label>
-                    <p class="hint">
+                    <p id="customer-search-help" class="hint">
                         Enter at least 3 digits to find a customer saved on this
                         device.
                         {{
@@ -572,9 +585,9 @@ onUnmounted(() => {
                     ><output class="line-amount"
                         ><span class="mobile-only">Amount</span
                         >{{
-                            (
-                                (totals.items[index]?.amount_cents ?? 0) / 100
-                            ).toFixed(2)
+                            formatAmount(
+                                (totals.items[index]?.amount_cents ?? 0) / 100,
+                            )
                         }}</output
                     ><button
                         type="button"

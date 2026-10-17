@@ -35,6 +35,12 @@ export const money = (cents: number) =>
         style: "currency",
         currency: "MYR",
     }).format(new Decimal(cents).div(100).toNumber());
+const amountFormatter = new Intl.NumberFormat("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+});
+export const formatAmount = (amount: string | number): string =>
+    amountFormatter.format(new Decimal(amount).toNumber());
 const ones = [
     "zero",
     "one",
