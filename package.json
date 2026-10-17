@@ -1,0 +1,35 @@
+{
+    "name": "sinlink-billing",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite --host 127.0.0.1",
+        "build": "vue-tsc --noEmit && vite build",
+        "test": "vitest run resources/js",
+        "test:browser": "playwright test",
+        "check": "vue-tsc --noEmit"
+    },
+    "dependencies": {
+        "@lucide/vue": "^1.58.0",
+        "decimal.js": "^10.6.0",
+        "dexie": "^4.4.6",
+        "jspdf": "^4.2.1",
+        "jspdf-autotable": "^5.0.9",
+        "pinia": "^3.0.4",
+        "vue": "^3.5.44",
+        "vue-router": "^4.6.4"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.56.1",
+        "@tailwindcss/vite": "^4.3.3",
+        "@types/node": "^22.19.0",
+        "@vitejs/plugin-vue": "^6.0.10",
+        "fake-indexeddb": "^6.2.4",
+        "tailwindcss": "^4.3.3",
+        "typescript": "~5.9.3",
+        "vite": "^8.3.4",
+        "vite-plugin-pwa": "^2.0.0",
+        "vitest": "^4.0.0",
+        "vue-tsc": "^3.2.0"
+    }
+}
